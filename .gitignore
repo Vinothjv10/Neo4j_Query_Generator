@@ -1,0 +1,40 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+.conda/
+
+# --- Environment files (keep .env.example) ---
+.env
+
+# --- Service account / credentials ---
+*.json
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Next.js (frontend) ---
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/next-env.d.ts
+
+# --- Python backend (text2sql-bi) ---
+text2sql-bi/.venv/
+text2sql-bi/__pycache__/

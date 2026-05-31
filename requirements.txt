@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pydantic-settings
+neo4j
+asyncpg
+python-dotenv
+httpx
+google-cloud-aiplatform
