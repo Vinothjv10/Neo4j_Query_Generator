@@ -6,3 +6,5 @@ asyncpg
 python-dotenv
 httpx
 google-cloud-aiplatform
+scikit-learn
+numpy
