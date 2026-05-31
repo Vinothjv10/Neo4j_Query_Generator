@@ -10,6 +10,7 @@ from app.api.routes.query import (
     neo4j_service,
     table_index_service,
     graph_rag_service,
+    embedding_service,
 )
 
 logging.basicConfig(
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("Starting %s", settings.app_title)
     neo4j_service.set_services(table_index_service, graph_rag_service)
+    table_index_service.set_embedding_service(embedding_service)
     await table_index_service.build_index()
     logger.info("Table index built on startup")
     logger.info("Docs available at http://localhost:8000/docs")

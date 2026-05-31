@@ -8,6 +8,25 @@ FORBIDDEN_KEYWORDS = [
 ]
 
 
+def _find_all(text: str, sub: str) -> list[int]:
+    pos = 0
+    results = []
+    while True:
+        pos = text.find(sub, pos)
+        if pos == -1:
+            break
+        results.append(pos)
+        pos += 1
+    return results
+
+
+def _is_whole_word(text: str, pos: int, kw: str = "") -> bool:
+    end = pos + len(kw)
+    before_ok = pos == 0 or not text[pos - 1].isalnum()
+    after_ok = end >= len(text) or not text[end].isalnum()
+    return before_ok and after_ok
+
+
 def validate_sql(sql: str) -> None:
     stripped = sql.strip()
     if not stripped.upper().startswith("SELECT"):
@@ -16,7 +35,7 @@ def validate_sql(sql: str) -> None:
 
     upper = stripped.upper()
     for kw in FORBIDDEN_KEYWORDS:
-        if kw in upper:
+        if any(_is_whole_word(upper, pos, kw) for pos in _find_all(upper, kw)):
             log_step("VALIDATOR", f"REJECTED - forbidden keyword {kw}", sql=sql.replace("\n", " "))
             raise ValueError(f"Forbidden SQL keyword detected: {kw}")
 
@@ -40,6 +59,40 @@ def validate_columns_in_sql(
         raise ValueError(msg)
     log_step("VALIDATOR", f"PASSED - column validation ({len(refs)} refs checked)")
     return sql
+
+
+def _check_unknown_columns(
+    sql: str,
+    tables_in_sql: set[str],
+    table_columns: dict[str, set[str]],
+    alias_to_table: dict[str, str],
+) -> list[str]:
+    refs = _extract_column_refs(sql)
+    qualified: list[tuple[str, str]] = []
+    for m in __import__("re").finditer(r"([a-zA-Z_]\w*)\s*\.\s*([a-zA-Z_]\w*)", sql):
+        q = m.group(1)
+        if q.lower() not in {"silver_layer", "public", "gold_layer", "bronze_layer"}:
+            qualified.append((q, m.group(2)))
+    qualified_cols = {c for _, c in qualified}
+    bare = {c for c in refs if c not in qualified_cols}
+    bare = {
+        c for c in bare
+        if c.upper() not in {"CASE", "WHEN", "THEN", "ELSE", "END", "NULL", "1", "0"}
+        and c not in tables_in_sql
+    }
+    unknown: list[str] = []
+    for qualifier, col in qualified:
+        table = alias_to_table.get(qualifier.upper())
+        if table and table in table_columns and col not in table_columns[table]:
+            unknown.append(f"{qualifier}.{col}")
+    if tables_in_sql:
+        all_tbl_cols: set[str] = set()
+        for tbl in tables_in_sql:
+            all_tbl_cols.update(table_columns.get(tbl, set()))
+        for col in bare:
+            if col not in all_tbl_cols:
+                unknown.append(col)
+    return unknown
 
 
 def _validate_columns_per_table(sql: str, table_columns: dict[str, set[str]]) -> str:
@@ -110,7 +163,12 @@ def _validate_columns_per_table(sql: str, table_columns: dict[str, set[str]]) ->
         fixed_sql = _auto_fix_columns(sql, unknown, tables_in_sql, table_columns, alias_to_table)
         if fixed_sql != sql:
             log_step("VALIDATOR", "AUTO-FIX applied columns", fixed_sql=fixed_sql.replace("\n", " "))
-            return fixed_sql
+            remaining = _check_unknown_columns(fixed_sql, tables_in_sql, table_columns, alias_to_table)
+            if not remaining:
+                return fixed_sql
+            detail = _build_rich_error(fixed_sql, remaining, tables_in_sql, table_columns)
+            log_step("VALIDATOR", "REJECTED - remaining unknown after auto-fix", unknown=remaining)
+            raise ValueError(detail)
         detail = _build_rich_error(sql, unknown, tables_in_sql, table_columns)
         log_step("VALIDATOR", "REJECTED - column not in target table", unknown=unknown)
         raise ValueError(detail)
@@ -196,9 +254,14 @@ def _auto_fix_columns(
 ) -> str:
     import re as _re
 
-    _ALIAS_MAP: dict[str, str] = {
-        "awb_number": "documentno",
-        "tracking_id": "documentno",
+    _ALIAS_MAP: dict[str, list[str]] = {
+        "awb_number": ["documentno"],
+        "tracking_id": ["documentno"],
+        "shipment_id": ["documentno", "awb_number"],
+        "shipmentid": ["documentno", "awb_number"],
+        "current_premise_name": ["premise_name"],
+        "current_status": ["status"],
+        "origin_cp_id": ["premise_id"],
     }
 
     replacements: dict[str, str] = {}
@@ -206,10 +269,12 @@ def _auto_fix_columns(
     for entry in unknown:
         col = entry.split(" (")[0].split(".")[-1].strip()
         if col in _ALIAS_MAP:
-            mapped = _ALIAS_MAP[col]
-            for tbl in tables_in_sql:
-                if mapped in table_columns.get(tbl, set()):
-                    replacements[col] = mapped
+            for mapped in _ALIAS_MAP[col]:
+                for tbl in tables_in_sql:
+                    if mapped in table_columns.get(tbl, set()):
+                        replacements[col] = mapped
+                        break
+                if col in replacements:
                     break
             if col in replacements:
                 continue
@@ -223,13 +288,6 @@ def _auto_fix_columns(
                     break
         if best_candidate:
             replacements[col] = best_candidate
-        else:
-            all_cols: set[str] = set()
-            for cols in table_columns.values():
-                all_cols.update(cols)
-            candidates = _find_column_fuzzy(col, all_cols)
-            if candidates:
-                replacements[col] = candidates[0]
 
     result = sql
     for old_col, new_col in replacements.items():

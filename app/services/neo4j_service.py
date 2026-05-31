@@ -249,6 +249,32 @@ class Neo4jService:
 
         return SchemaContext(tables=tables)
 
+    def filter_columns_by_relevance(
+        self,
+        ctx: SchemaContext,
+        relevant_columns: dict[str, list[str]],
+    ) -> SchemaContext:
+        filtered_tables: list[TableInfo] = []
+        for table in ctx.tables:
+            relevant = relevant_columns.get(table.table_name)
+            if relevant:
+                col_set = set(relevant)
+                filtered_cols = [c for c in table.columns if c.name in col_set]
+                if not filtered_cols:
+                    filtered_cols = table.columns[:5]
+                filtered_tables.append(
+                    TableInfo(
+                        table_name=table.table_name,
+                        schema_name=table.schema_name,
+                        description=table.description,
+                        columns=filtered_cols,
+                        related_tables=table.related_tables,
+                    )
+                )
+            else:
+                filtered_tables.append(table)
+        return SchemaContext(tables=filtered_tables)
+
     def _build_col_desc(
         self, description: str | None, maps_to: str | None
     ) -> str | None:

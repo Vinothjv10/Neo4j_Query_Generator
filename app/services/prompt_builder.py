@@ -5,86 +5,49 @@ class PromptBuilder:
     @staticmethod
     def build_system_prompt() -> str:
         return (
-            "You are an expert SQL analyst for a logistics company running "
-            "the Innofulfill platform. You generate precise, read-only PostgreSQL "
-            "SELECT queries from a user's business question and schema context.\n\n"
+            "You are an expert SQL analyst for a logistics company using "
+            "the Innofulfill platform. Generate precise, read-only PostgreSQL "
+            "SELECT queries from business questions and schema context.\n\n"
 
-            "--- SYSTEM CONTEXT ---\n"
-            "Innofulfill is a logistics ERP with these modules:\n"
-            "  - Booking (first mile): shipment creation, sender/CP pickup\n"
-            "  - HubOps (middle mile): hub processing, inscan, outscan, sorting\n"
-            "  - Dispatch (last mile): delivery to receiver, DRS, delivery agents\n"
-            "  - Rathsetu (TMS): transport management, trip planning, vehicle tracking\n"
-            "  - Automation Devices: weighbridges, scanners, sorters\n"
-            "  - Support: customer service, POD, claims\n"
-            "  - Tracking: shipment status tracking across all modules\n\n"
+            "--- INNOFULFILL DOMAIN ---\n"
+            "Booking (First Mile) — shipment creation, AWB, pickup\n"
+            "HubOps (Middle Mile) — sorting, inscan, outscan, bagging. "
+            "Statuses: RETURN_INITIATED, RTO_DELIVERED (UPPER_SNAKE_CASE)\n"
+            "Dispatch (Last Mile) — delivery runs, NDR, RTO. "
+            "Statuses: rto, rto_delivered (lowercase)\n"
+            "Rathsetu (TMS) — vehicle trips, route planning\n\n"
 
-            "--- TABLE TIER ARCHITECTURE ---\n"
-            "  t1_ tables = RAW data ingested directly from Innofulfill subsystems\n"
-            "               (booking, hubops, dispatch, rathsetu APIs)\n"
-            "  t2_ tables = MID-level joined/harmonized tables combining multiple t1_ sources\n"
-            "  t3_ tables = REPORT/aggregate tables built from t1_ and t2_ sources\n"
-            "               PREFER t3_ tables as your primary FROM target.\n\n"
+            "--- RTO LIFECYCLE ---\n"
+            "Initiated → Out for Delivery → Delivery Failed → Delivered\n"
+            "Dispatch statuses: rto → rto_out_for_delivery → rto_undelivered → rto_delivered\n"
+            "Hubops statuses: RETURN_INITIATED → RTO_OUT_FOR_DELIVERY → "
+            "RTO_UNDELIVERED → RTO_DELIVERED\n"
+            "RTO_DELIVERED means shipment reached sender's CP.\n\n"
 
-            "--- RTO (RETURN TO ORIGIN) PROCESS ---\n"
-            "RTO is initiated when a shipment cannot be delivered. Status flow:\n"
-            "  1. RTO initiated — rto (dispatch) / RETURN_INITIATED (hubops)\n"
-            "  2. RTO out for delivery — rto_out_for_delivery / RTO_OUT_FOR_DELIVERY\n"
-            "  3. RTO undelivered — rto_undelivered / RTO_UNDELIVERED\n"
-            "  4. RTO delivered — rto_delivered / RTO_DELIVERED (shipment returned)\n"
-            "Terminal statuses: DELIVERED, RTO_DELIVERED, 3PL ITEM DELIVERY\n"
-            "When RTO_DELIVERED: for courier, the shipment has reached the sender CP.\n\n"
+            "--- TABLE TIERS ---\n"
+            "t1_ = raw data, t2_ = joined/harmonized, "
+            "t3_ = report/aggregate — PREFER t3_ as FROM target\n\n"
 
             "--- DOMAIN GLOSSARY ---\n"
-            "  CP = Channel Partner (franchise/agent), column: booking_cp\n"
-            "  Hub = processing facility, columns: hub, premise_name, origin_hub, destination_hub\n"
-            "  AWB = Air Waybill (unique tracking number), column: awb_number\n"
-            "  DRS = Delivery Run Sheet, columns: drs_number, drs_created_at, new_drs_number\n"
-            "  POD = Proof of Delivery\n"
-            "  Inscan = physical receipt at a hub, columns: inscan_time, origin_hub_inscan_at, destination_hub_inscan_at\n"
-            "  Outscan = dispatch from a hub, columns: outscan_time, origin_hub_outscan_at\n"
-            "  OFD = Out For Delivery, columns: outscan_to_destination_cp_at, first_ofd_attempt_time\n"
-            "  NDD = Next Delivery Date, column: ndd\n"
-            "  TAT = Turn-Around Time, column: tat_in_hrs\n"
-            "  EDD = Estimated Delivery Date, columns: planned_edd, revised_edd\n"
-            "  Sevasetu = Last-mile dispatch system, columns prefixed with '(Sevasetu)'\n"
-            "  Terminal = final status (DELIVERED / RTO_DELIVERED), columns: is_terminal, last_terminal_status\n"
-            "  Anomaly = data quality flag, columns prefixed with 'anomaly_'\n\n"
-
-            "--- STATUS MAPPING (Dispatch ↔ HubOps terminology) ---\n"
-            "  rto (dispatch) = RETURN_INITIATED (hubops)\n"
-            "  rto_out_for_delivery (dispatch) = RTO_OUT_FOR_DELIVERY (hubops)\n"
-            "  rto_undelivered (dispatch) = RTO_UNDELIVERED (hubops)\n"
-            "  rto_delivered (dispatch) = RTO_DELIVERED (hubops)\n"
-            "  delivered (dispatch) = DELIVERED (hubops)\n\n"
+            "AWB = tracking number, DRS = delivery run sheet, POD = proof of delivery\n"
+            "CP = Channel Partner (franchise/agent), NDR = non-delivery report\n"
+            "Inscan = receipt at hub, Outscan = dispatch from hub, OFD = out for delivery\n"
+            "NDD = next delivery date, TAT = turnaround time, EDD = estimated delivery date\n"
+            "Terminal statuses: DELIVERED, RTO_DELIVERED\n\n"
 
             "--- RULES ---\n"
-            "1. Return ONLY the raw SQL query — no markdown, no explanation, no code fences.\n"
-            "2. Always use fully qualified table names: schema_name.table_name\n"
-            "3. CRITICAL: ONLY use columns explicitly listed in the schema below. "
-            "Never invent columns. Every column in your SQL must appear verbatim "
-            "in the column list of one of the tables shown.\n"
-            "4. Do not use INSERT, UPDATE, DELETE, DROP, TRUNCATE, or any DDL/DML.\n"
-            "5. Tables prefixed 't3_' are report/aggregate tables — PREFER them as the "
-            "primary FROM table.\n"
-            "6. Add meaningful column aliases for aggregations "
-            "(e.g., SUM(weight_in_kg) AS total_weight).\n"
-            "7. Always include a LIMIT clause. Default to LIMIT 100 unless the question "
-            "asks for a count or total.\n"
-            "8. Use ONLY PostgreSQL syntax for date/time operations:\n"
-            "   - CURRENT_DATE, CURRENT_TIMESTAMP for today\n"
-            "   - INTERVAL '1 day' / INTERVAL '1 month' for offsets\n"
-            "   - CAST(column AS DATE) or column::DATE\n"
-            "   - date_trunc('month', date_column) for monthly aggregation\n"
-            "   - EXTRACT(YEAR/MONTH/DOW FROM date_column)\n"
-            "   - NEVER use SQLite syntax like DATE('now', '-1 day')\n"
-            "9. If the question asks 'by X' or 'on X level', GROUP BY that column.\n"
-            "10. If the question asks about RTO, use last_terminal_status column "
-            "with filter: WHERE last_terminal_status = 'RTO_DELIVERED' (or status column for other modules).\n"
-            "11. For delivery performance questions, consider using columns like "
-            "ndd, NDD-related, delivery_attempts, first_attempt_time, tat_in_hrs.\n"
-            "12. If the question cannot be answered with the given columns, "
-            "return exactly: UNABLE_TO_GENERATE"
+            "1. Return ONLY raw SQL. No markdown, no code fences, no explanation.\n"
+            "2. Fully qualify names: schema_name.table_name\n"
+            "3. ONLY use columns listed below. Never invent columns.\n"
+            "4. SELECT only. No INSERT, UPDATE, DELETE, DROP, TRUNCATE, ALTER, CREATE.\n"
+            "5. Prefer t3_ tables as FROM target.\n"
+            "6. Add meaningful aliases for aggregations (e.g. COUNT(*) AS total).\n"
+            "7. LIMIT 100 unless COUNT query.\n"
+            "8. PostgreSQL syntax: CURRENT_DATE, INTERVAL, ::DATE, date_trunc, EXTRACT.\n"
+            "9. GROUP BY column if question says 'by X' or 'on X level'.\n"
+            "10. For RTO: WHERE last_terminal_status = 'RTO_DELIVERED' or "
+            "status = 'rto_delivered'.\n"
+            "11. If cannot answer, return exactly: UNABLE_TO_GENERATE"
         )
 
     @staticmethod
@@ -110,12 +73,16 @@ class PromptBuilder:
                 f"[{tier}] {table.schema_name}.{table.table_name} — {desc}"
             )
             col_parts = []
-            desc_cols = [c for c in table.columns if c.description]
-            no_desc_cols = [c for c in table.columns if not c.description]
-            for col in (desc_cols + no_desc_cols)[:12]:
-                col_desc = (col.description or "No description")[:60]
-                col_parts.append(f"{col.name} ({col.data_type}): {col_desc}")
-            lines.append("  Columns: " + ", ".join(col_parts))
+            for col in table.columns:
+                col_desc = (col.description or "")[:60]
+                if col_desc:
+                    col_parts.append(f"{col.name} ({col.data_type}): {col_desc}")
+                else:
+                    col_parts.append(f"{col.name} ({col.data_type})")
+            if col_parts:
+                lines.append("  Columns: " + ", ".join(col_parts))
+            else:
+                lines.append("  Columns: (none)")
             relevant_deps = [
                 t for t in table.related_tables
                 if t.startswith("t3_") or t.startswith("t2_")
@@ -132,7 +99,10 @@ class PromptBuilder:
             if join_hints:
                 lines.append("--- JOIN HINTS (for combining tables) ---")
                 for h in join_hints[:4]:
-                    lines.append(f"  {h['source_table']}.{h['source_col']} = {h['target_table']}.{h['target_col']}")
+                    lines.append(
+                        f"  {h['source_table']}.{h['source_col']} = "
+                        f"{h['target_table']}.{h['target_col']}"
+                    )
                 lines.append("")
 
         lines.append(f"Business Question: {question}")

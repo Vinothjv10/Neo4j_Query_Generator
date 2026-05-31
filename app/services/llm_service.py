@@ -98,7 +98,7 @@ class LLMService:
         raw = raw.strip()
         log_step("LLM", f"Raw response received", chars=len(raw))
 
-        if raw == "UNABLE_TO_GENERATE":
+        if raw.startswith("UNABLE_TO_GENERATE"):
             raise ValueError(
                 "The LLM could not generate a SQL query for this question "
                 "with the available schema."

@@ -12,6 +12,7 @@ from app.services.postgres_service import PostgresService
 from app.services.table_index_service import TableIndexService
 from app.services.graph_rag_service import GraphRAGService
 from app.services.tot_service import ToTService
+from app.services.embedding_service import EmbeddingService
 from app.utils.sql_validator import validate_sql, validate_columns_in_sql
 from app.utils.logger import log_step
 
@@ -24,6 +25,7 @@ postgres_service = PostgresService()
 table_index_service = TableIndexService(neo4j_service)
 graph_rag_service = GraphRAGService(neo4j_service)
 tot_service = ToTService(llm_service)
+embedding_service = EmbeddingService()
 
 MAX_RETRIES = 5
 USE_TOT = False
@@ -57,6 +59,33 @@ async def query(request: QueryRequest) -> QueryResponse:
     table_names = [f"{t.schema_name}.{t.table_name}" for t in schema_context.tables]
     log_step("NEO4J", f"Found {len(schema_context.tables)} tables", tables=table_names)
 
+    q_vec = None
+    if embedding_service.is_ready:
+        try:
+            q_vec = await embedding_service.embed_question(request.question)
+        except Exception:
+            pass
+
+    relevant_columns: dict[str, list[str]] = {}
+    for table in schema_context.tables:
+        try:
+            cols = await table_index_service.get_relevant_columns(
+                request.question, table.table_name, top_k=5, q_vec=q_vec
+            )
+            if cols:
+                relevant_columns[table.table_name] = cols
+        except Exception:
+            pass
+
+    if relevant_columns:
+        filtered_context = neo4j_service.filter_columns_by_relevance(
+            schema_context, relevant_columns
+        )
+        log_step("COLUMNS", f"Filtered to relevant columns per table",
+                 tables_with_filters=list(relevant_columns.keys()))
+    else:
+        filtered_context = schema_context
+
     enrichment = None
     try:
         enrichment = await graph_rag_service.enrich(
@@ -67,7 +96,7 @@ async def query(request: QueryRequest) -> QueryResponse:
 
     system_prompt = prompt_builder.build_system_prompt()
     user_prompt = prompt_builder.build_user_prompt(
-        request.question, schema_context, enrichment
+        request.question, filtered_context, enrichment
     )
     log_step(
         "PROMPT",
@@ -199,9 +228,14 @@ async def query(request: QueryRequest) -> QueryResponse:
                 alt_fixed = _try_auto_fix_sql(
                     generated_sql, known_columns, known_tables, table_columns
                 )
-                if alt_fixed != generated_sql:
+                if alt_fixed is not None and alt_fixed != generated_sql:
                     log_step("RETRY", "Attempting column auto-fix", fixed_sql=alt_fixed.replace("\n", " "))
                     generated_sql = alt_fixed
+                    continue
+                pg_fixed = _fix_pg_errors(generated_sql, str(exc), table_columns)
+                if pg_fixed != generated_sql:
+                    log_step("RETRY", "Attempting PG-level fix", fixed_sql=pg_fixed.replace("\n", " "))
+                    generated_sql = pg_fixed
                     continue
             raise HTTPException(
                 status_code=500,
@@ -297,6 +331,25 @@ def _fix_table_aliases(sql: str) -> str:
                 alias + ".",
                 result,
             )
+    return result
+
+
+def _fix_pg_errors(sql: str, error: str, table_columns: dict[str, set[str]]) -> str:
+    import re
+    pg_alias = {
+        "current_status": "status",
+        "current_premise_name": "premise_name",
+        "origin_cp_id": "premise_id",
+        "delivery_datetime": "drs_created_date",
+        "delivery_date": "drs_created_date",
+        "trip_end_hub_inscan_at": "booking_datetime",
+    }
+    result = sql
+    for match in re.finditer(r'column\s+"(\w+)"\s+does not exist', error, re.IGNORECASE):
+        bad_col = match.group(1)
+        if bad_col in pg_alias:
+            good_col = pg_alias[bad_col]
+            result = re.sub(r'\b' + re.escape(bad_col) + r'\b', good_col, result)
     return result
 
 
