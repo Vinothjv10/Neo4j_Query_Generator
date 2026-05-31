@@ -83,12 +83,18 @@ def _check_unknown_columns(
     unknown: list[str] = []
     for qualifier, col in qualified:
         table = alias_to_table.get(qualifier.upper())
-        if table and table in table_columns and col not in table_columns[table]:
-            unknown.append(f"{qualifier}.{col}")
+        if table:
+            tbl_lower = table.lower()
+            matched = next((cols for k, cols in table_columns.items() if k.lower() == tbl_lower), None)
+            if matched and col not in matched:
+                unknown.append(f"{qualifier}.{col}")
     if tables_in_sql:
         all_tbl_cols: set[str] = set()
         for tbl in tables_in_sql:
-            all_tbl_cols.update(table_columns.get(tbl, set()))
+            tbl_lower = tbl.lower()
+            matched = next((cols for k, cols in table_columns.items() if k.lower() == tbl_lower), None)
+            if matched:
+                all_tbl_cols.update(matched)
         for col in bare:
             if col not in all_tbl_cols:
                 unknown.append(col)
@@ -101,7 +107,7 @@ def _validate_columns_per_table(sql: str, table_columns: dict[str, set[str]]) ->
     tables_in_sql: set[str] = set()
     alias_to_table: dict[str, str] = {}
     for m in _re.finditer(
-        r"(?:^|\s)(?:FROM|JOIN)\s+(?:(?:silver_layer|public|gold_layer|bronze_layer)\.)?(\w+)(?:\s+(?:AS\s+)?(\w+))?",
+        r"""(?:^|\s)(?:FROM|JOIN)\s+(?:(?:silver_layer|public|gold_layer|bronze_layer)\.)?"?(\w+)"?(?:\s+(?:AS\s+)?(\w+))?""",
         sql, _re.IGNORECASE | _re.MULTILINE,
     ):
         preceding = sql[max(0, m.start() - 20):m.start()]
@@ -133,11 +139,14 @@ def _validate_columns_per_table(sql: str, table_columns: dict[str, set[str]]) ->
 
     for qualifier, col in qualified_refs:
         table = alias_to_table.get(qualifier.upper())
-        if table and table in table_columns:
-            if col not in table_columns[table]:
-                close = _did_you_mean(col, table_columns[table])
-                hint = f" Did you mean '{close}'?" if close else ""
-                unknown.append(f"{qualifier}.{col}{hint}")
+        if table:
+            tbl_lower = table.lower()
+            matched_cols = next((cols for k, cols in table_columns.items() if k.lower() == tbl_lower), None)
+            if matched_cols is not None:
+                if col not in matched_cols:
+                    close = _did_you_mean(col, matched_cols)
+                    hint = f" Did you mean '{close}'?" if close else ""
+                    unknown.append(f"{qualifier}.{col}{hint}")
         elif table:
             unknown.append(f"{qualifier}.{col} (table '{table}' not in context)")
 
@@ -145,7 +154,11 @@ def _validate_columns_per_table(sql: str, table_columns: dict[str, set[str]]) ->
         tbls_list = sorted(tables_in_sql)
         all_tbl_cols: set[str] = set()
         for tbl in tables_in_sql:
-            all_tbl_cols.update(table_columns.get(tbl, set()))
+            tbl_lower = tbl.lower()
+            for key, cols in table_columns.items():
+                if key.lower() == tbl_lower:
+                    all_tbl_cols.update(cols)
+                    break
         for col in bare_refs:
             if col not in all_tbl_cols:
                 close = _did_you_mean(col, all_tbl_cols)
@@ -212,7 +225,12 @@ def _build_rich_error(
 
         if tbl_name:
             lines.append(f"  ERROR: Column '{raw_col}' does not exist on table '{tbl_name}'")
-            avail = sorted(table_columns.get(tbl_name, set()))
+            tbl_lower = tbl_name.lower()
+            avail: list[str] = []
+            for key, cols in table_columns.items():
+                if key.lower() == tbl_lower:
+                    avail = sorted(cols)
+                    break
             close = _did_you_mean(raw_col, set(avail))
             lines.append(f"  Available columns on '{tbl_name}': {', '.join(avail[:15])}")
             if len(avail) > 15:
@@ -224,7 +242,11 @@ def _build_rich_error(
             lines.append(f"  ERROR: Unknown column '{col}'")
             all_avail: set[str] = set()
             for tbl in tables_in_sql:
-                all_avail.update(table_columns.get(tbl, set()))
+                tbl_lower = tbl.lower()
+                for key, cols in table_columns.items():
+                    if key.lower() == tbl_lower:
+                        all_avail.update(cols)
+                        break
             close = _did_you_mean(col, all_avail)
             if close:
                 lines.append(f"  SUGGESTION: Use '{close}' instead of '{col}'")
@@ -236,8 +258,10 @@ def _build_rich_error(
         lines.append("")
         lines.append("SCHEMA REMINDER for the table you are querying:")
         for tbl in tables_in_sql:
-            if tbl in table_columns:
-                avail = sorted(table_columns[tbl])
+            tbl_lower = tbl.lower()
+            tbl_cols = next((cols for k, cols in table_columns.items() if k.lower() == tbl_lower), None)
+            if tbl_cols:
+                avail = sorted(tbl_cols)
                 lines.append(f"  '{tbl}' columns: {', '.join(avail[:20])}")
                 if len(avail) > 20:
                     lines.append(f"    ... and {len(avail) - 20} more")
@@ -271,7 +295,9 @@ def _auto_fix_columns(
         if col in _ALIAS_MAP:
             for mapped in _ALIAS_MAP[col]:
                 for tbl in tables_in_sql:
-                    if mapped in table_columns.get(tbl, set()):
+                    tbl_lower = tbl.lower()
+                    tbl_cols = next((c for k, c in table_columns.items() if k.lower() == tbl_lower), set())
+                    if mapped in tbl_cols:
                         replacements[col] = mapped
                         break
                 if col in replacements:
@@ -280,7 +306,8 @@ def _auto_fix_columns(
                 continue
         best_candidate = None
         for tbl in tables_in_sql:
-            tbl_cols = table_columns.get(tbl, set())
+            tbl_lower = tbl.lower()
+            tbl_cols = next((c for k, c in table_columns.items() if k.lower() == tbl_lower), set())
             if col not in tbl_cols:
                 candidates = _find_column_fuzzy(col, tbl_cols)
                 if candidates:
@@ -316,8 +343,11 @@ def _extract_column_refs(sql: str) -> list[str]:
     stripped = re.sub(r"--.*", "", sql)
     stripped = re.sub(r"'.*?'", "", stripped)
     stripped = re.sub(r"\".*?\"", "", stripped)
+    stripped = re.sub(r"EXTRACT\s*\(.*?\)", "", stripped, flags=re.IGNORECASE | re.DOTALL)
     aliases = _collect_table_aliases(stripped)
     col_refs: set[str] = set()
+
+    sql_upper = stripped.upper()
 
     schemas = {"silver_layer", "public", "gold_layer", "bronze_layer"}
     for m in re.finditer(
@@ -337,12 +367,17 @@ def _extract_column_refs(sql: str) -> list[str]:
                               "INTERVAL"}:
             col_refs.add(m.group(1))
 
+    _EXTRACT_ARGS = {"DAY", "MONTH", "YEAR", "HOUR", "MINUTE", "SECOND", "WEEK",
+                     "QUARTER", "DECADE", "CENTURY", "MILLENNIUM", "DOW", "DOY",
+                     "EPOCH", "ISOYEAR", "ISODOW", "TIMEZONE", "TIMEZONE_HOUR",
+                     "TIMEZONE_MINUTE"}
+
     for m in re.finditer(r"\b(?:COUNT|SUM|AVG|MIN|MAX|COALESCE)\s*\(\s*(?:DISTINCT\s+)?(?:(?:\w+\.)?(\w+))", stripped, re.IGNORECASE):
         col_refs.add(m.group(1))
 
     select_section = _get_select_section(stripped)
+    select_aliases: set[str] = set()
     if select_section:
-        select_aliases: set[str] = set()
         for m in re.finditer(r"\bAS\s+([a-zA-Z_]\w+)", select_section, re.IGNORECASE):
             select_aliases.add(m.group(1).upper())
         for m in re.finditer(
@@ -357,6 +392,7 @@ def _extract_column_refs(sql: str) -> list[str]:
                          "THEN", "ELSE", "END", "NULL"}
                 and candidate not in aliases
                 and candidate not in select_aliases
+                and candidate not in _EXTRACT_ARGS
             ):
                 col_refs.add(m.group(1))
 
@@ -370,21 +406,21 @@ def _extract_column_refs(sql: str) -> list[str]:
                 "INTERVAL", "DAY", "MONTH", "YEAR", "EXTRACT", "FROM",
                 "TO_CHAR", "DATE_TRUNC", "CAST", "AS",
                 "CASE", "WHEN", "THEN", "ELSE", "END",
-            } and candidate not in aliases:
+            } | _EXTRACT_ARGS and candidate not in aliases:
                 col_refs.add(m.group(1))
 
     group_cols = _get_groupby_section(stripped)
     if group_cols:
         for m in re.finditer(r"([a-zA-Z_]\w+)", group_cols):
             candidate = m.group(1).upper()
-            if candidate not in aliases | {"CASE", "WHEN", "THEN", "ELSE", "END", "NULL"}:
+            if candidate not in select_aliases | aliases | _EXTRACT_ARGS | {"CASE", "WHEN", "THEN", "ELSE", "END", "NULL"}:
                 col_refs.add(m.group(1))
 
     order_cols = _get_orderby_section(stripped)
     if order_cols:
         for m in re.finditer(r"([a-zA-Z_]\w+)", order_cols):
             candidate = m.group(1).upper()
-            if candidate not in {"ASC", "DESC", "CASE", "WHEN", "THEN", "ELSE", "END", "NULL"} | aliases:
+            if candidate not in select_aliases | {"ASC", "DESC", "CASE", "WHEN", "THEN", "ELSE", "END", "NULL"} | _EXTRACT_ARGS | aliases:
                 col_refs.add(m.group(1))
 
     return list(col_refs)
@@ -393,7 +429,7 @@ def _extract_column_refs(sql: str) -> list[str]:
 def _collect_table_aliases(sql: str) -> set[str]:
     aliases: set[str] = set()
     for m in re.finditer(
-        r"(?:^|\s)(?:FROM|JOIN)\s+(?:\w+\.)?(\w+)(?:\s+(?:AS\s+)?(\w+))?",
+        r"""(?:^|\s)(?:FROM|JOIN)\s+(?:\w+\.)?"?(\w+)"?(?:\s+(?:AS\s+)?(\w+))?""",
         sql,
         re.IGNORECASE | re.MULTILINE,
     ):

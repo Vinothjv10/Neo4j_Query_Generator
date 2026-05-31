@@ -104,7 +104,7 @@ class EmbeddingService:
                     cdesc = c.get("description") or ""
                     col_descs.append(f"{c['name']}: {cdesc}" if cdesc else c['name'])
 
-            table_doc = f"{name} {' '.join(col_names)} {desc}"
+            table_doc = f"{name} {name.replace('_', ' ')} {' '.join(col_names)} {desc}"
             self._table_names.append(name)
             self._table_docs.append(table_doc)
             all_table_texts.append(table_doc)
@@ -114,7 +114,7 @@ class EmbeddingService:
             for c in t.get("columns", []):
                 if c.get("name"):
                     cdesc = c.get("description") or ""
-                    cdoc = f"{c['name']}: {cdesc}" if cdesc else c["name"]
+                    cdoc = f"{c['name']} {c['name'].replace('_', ' ')}: {cdesc}" if cdesc else f"{c['name']} {c['name'].replace('_', ' ')}"
                     col_doc_map[c["name"]] = np.zeros(EMBED_DIM, dtype=np.float32)
                     all_table_texts.append(cdoc)
             self._column_embeddings[name] = col_doc_map

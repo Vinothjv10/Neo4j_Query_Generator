@@ -24,6 +24,13 @@ export default function QueryForm({ onSubmit, loading }: QueryFormProps) {
     onSubmit(question.trim(), topK);
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey && !loading) {
+      e.preventDefault();
+      if (question.trim()) onSubmit(question.trim(), topK);
+    }
+  };
+
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       <div>
@@ -38,6 +45,7 @@ export default function QueryForm({ onSubmit, loading }: QueryFormProps) {
           rows={3}
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder='e.g. "Show me total revenue by month in 2024"'
           className="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none transition-colors"
           disabled={loading}

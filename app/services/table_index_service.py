@@ -46,15 +46,19 @@ class TableIndexService:
         self._entries = []
 
         for t in raw_tables:
+            name_split = t["name"].replace("_", " ")
+            desc = t.get("description") or ""
             doc_parts: list[str] = [
                 t["name"],
-                t.get("description") or "",
+                name_split,
+                desc,
             ]
             for c in t.get("columns", []):
                 doc_parts.append(c["name"])
-                desc = c.get("description") or ""
-                if desc:
-                    doc_parts.append(desc)
+                doc_parts.append(c["name"].replace("_", " "))
+                cdesc = c.get("description") or ""
+                if cdesc:
+                    doc_parts.append(cdesc)
 
             doc = " ".join(doc_parts)
             documents.append(doc)
@@ -91,17 +95,20 @@ class TableIndexService:
                          error=str(exc))
 
     async def search(
-        self, question: str, top_k: int = 5, min_score: float = 0.02
+        self, question: str, top_k: int = 5, min_score: float = 0.02,
+        allow_t1: bool = False,
     ) -> list[TableIndexEntry]:
         if not self._built:
             await self.build_index()
 
-        entries = await self._tfidf_search(question, top_k * 2, min_score)
+        broad_k = max(top_k * 4, 20)
+        entries = await self._tfidf_search(question, broad_k, min_score)
 
         if self._embedding_service and self._embedding_service.is_ready:
-            entries = await self._hybrid_search(question, entries, top_k)
+            entries = await self._hybrid_search(question, entries, broad_k)
 
-        entries = await self._prioritize_t3(entries, top_k)
+        if not allow_t1:
+            entries = await self._prioritize_t3(entries, top_k)
         return entries[:top_k]
 
     async def _prioritize_t3(
@@ -198,7 +205,7 @@ class TableIndexService:
         return [e for e, _ in final[:top_k]]
 
     async def get_relevant_columns(
-        self, question: str, table_name: str, top_k: int = 5,
+        self, question: str, table_name: str, top_k: int = 8,
         q_vec: np.ndarray | None = None
     ) -> list[str]:
         if not self._embedding_service or not self._embedding_service.is_ready:
@@ -207,6 +214,16 @@ class TableIndexService:
             question, table_name, top_k, q_vec=q_vec
         )
         return [c for c, _ in results]
+
+    async def get_relevant_columns_with_scores(
+        self, question: str, table_name: str, top_k: int = 8,
+        q_vec: np.ndarray | None = None
+    ) -> list[tuple[str, float]]:
+        if not self._embedding_service or not self._embedding_service.is_ready:
+            return []
+        return await self._embedding_service.rank_columns(
+            question, table_name, top_k, q_vec=q_vec
+        )
 
     async def get_enriched_document(self, table_name: str) -> str | None:
         for entry in self._entries:

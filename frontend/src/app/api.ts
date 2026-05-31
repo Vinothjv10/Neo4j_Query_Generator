@@ -1,9 +1,32 @@
+export interface TableReason {
+  table: string;
+  tier: string;
+  description: string;
+  top_columns: string[];
+  reason: string;
+}
+
+export interface ColumnReason {
+  column: string;
+  score: number;
+  reason: string;
+}
+
+export interface Reasoning {
+  table_selection: TableReason[];
+  column_selection: Record<string, ColumnReason[]>;
+  final_explanation: string | null;
+  sql_generation: string;
+  retries: string[];
+}
+
 export interface QueryResponse {
   question: string;
   generated_sql: string;
   results: Record<string, unknown>[];
   row_count: number;
   schema_tables_used: string[];
+  reasoning: Reasoning | null;
 }
 
 export async function submitQuery(

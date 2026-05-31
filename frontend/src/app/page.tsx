@@ -5,6 +5,7 @@ import QueryForm from "@/components/QueryForm";
 import SqlResult from "@/components/SqlResult";
 import DataTable from "@/components/DataTable";
 import ErrorAlert from "@/components/ErrorAlert";
+import ReasoningPanel from "@/components/ReasoningPanel";
 import { submitQuery, QueryResponse } from "./api";
 
 export default function Home() {
@@ -77,6 +78,12 @@ export default function Home() {
               tablesUsed={result.schema_tables_used}
             />
           </div>
+
+          {result.reasoning && (
+            <div className="rounded-xl border border-gray-800 bg-gray-950 p-6 shadow-sm">
+              <ReasoningPanel reasoning={result.reasoning} />
+            </div>
+          )}
 
           <div className="rounded-xl border border-gray-800 bg-gray-950 p-6 shadow-sm">
             <h3 className="mb-3 text-sm font-semibold text-gray-300">

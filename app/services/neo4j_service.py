@@ -31,13 +31,67 @@ class Neo4jService:
     async def close(self) -> None:
         await self._driver.close()
 
-    async def get_schema_context(self, question: str) -> SchemaContext:
+    async def get_all_t3_tables(self) -> SchemaContext:
+        ctx = await self._fetch_all_t3()
+        return SchemaContext(tables=ctx.tables[:10])
+
+    async def _fetch_all_t3(self) -> SchemaContext:
+        query = """
+        MATCH (t:Table)
+        WHERE t.name STARTS WITH "t3_"
+        OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c:Column)
+        OPTIONAL MATCH (c)-[:MAPS_TO]->(mapped:Column)
+        OPTIONAL MATCH (t)-[:DEPENDS_ON]->(dep:Table)
+        WITH t, c, mapped, dep
+        ORDER BY t.name
+        RETURN t.name AS table_name,
+               COALESCE(t.schema, "silver_layer") AS schema_name,
+               t.description AS table_desc,
+               collect(DISTINCT {
+                 name: c.name,
+                 type: c.data_type,
+                 description: c.description,
+                 maps_to: mapped.name
+               }) AS columns,
+               collect(DISTINCT dep.name) AS related_tables
+        """
+        async with self._driver.session() as session:
+            result = await session.run(query)
+            records = await result.data()
+
+        tables: list[TableInfo] = []
+        for record in records:
+            columns = [
+                ColumnInfo(
+                    name=self._clean_column_name(col["name"]),
+                    data_type=col.get("type") or "unknown",
+                    description=self._build_col_desc(
+                        col.get("description"), col.get("maps_to")
+                    ),
+                )
+                for col in record.get("columns", [])
+                if col.get("name")
+            ]
+            tables.append(
+                TableInfo(
+                    table_name=record["table_name"],
+                    schema_name=record.get("schema_name", "silver_layer"),
+                    description=record.get("table_desc"),
+                    columns=columns,
+                    related_tables=[
+                        r for r in record.get("related_tables", []) if r
+                    ],
+                )
+            )
+        return SchemaContext(tables=tables)
+
+    async def get_schema_context(self, question: str, allow_t1: bool = False) -> SchemaContext:
         matched_tables: list[TableInfo] = []
 
         if self._table_index:
             log_step("NEO4J", "Using semantic TF-IDF search for table retrieval")
             try:
-                entries = await self._table_index.search(question, top_k=5)
+                entries = await self._table_index.search(question, top_k=5, allow_t1=allow_t1)
                 if entries:
                     table_names = [e.table_name for e in entries]
                     log_step(
@@ -123,7 +177,7 @@ class Neo4jService:
         for record in records:
             columns = [
                 ColumnInfo(
-                    name=col["name"],
+                    name=self._clean_column_name(col["name"]),
                     data_type=col.get("type") or "unknown",
                     description=self._build_col_desc(
                         col.get("description"), col.get("maps_to")
@@ -174,7 +228,7 @@ class Neo4jService:
         for record in records:
             columns = [
                 ColumnInfo(
-                    name=col["name"],
+                    name=self._clean_column_name(col["name"]),
                     data_type=col.get("type") or "unknown",
                     description=self._build_col_desc(
                         col.get("description"), col.get("maps_to")
@@ -223,7 +277,7 @@ class Neo4jService:
         for record in records:
             columns = [
                 ColumnInfo(
-                    name=col["name"],
+                    name=self._clean_column_name(col["name"]),
                     data_type=col.get("type") or "unknown",
                     description=self._build_col_desc(
                         col.get("description"), col.get("maps_to")
@@ -274,6 +328,11 @@ class Neo4jService:
             else:
                 filtered_tables.append(table)
         return SchemaContext(tables=filtered_tables)
+
+    @staticmethod
+    def _clean_column_name(name: str) -> str:
+        parts = name.split(".")
+        return parts[-1] if len(parts) > 1 and len(parts[0]) <= 3 else name
 
     def _build_col_desc(
         self, description: str | None, maps_to: str | None

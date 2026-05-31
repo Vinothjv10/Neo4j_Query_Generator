@@ -24,12 +24,35 @@ class SchemaContext(BaseModel):
     tables: list[TableInfo]
 
 
+class TableReason(BaseModel):
+    table: str
+    tier: str
+    description: str
+    top_columns: list[str]
+    reason: str
+
+
+class ColumnReason(BaseModel):
+    column: str
+    score: float
+    reason: str
+
+
+class Reasoning(BaseModel):
+    table_selection: list[TableReason]
+    column_selection: dict[str, list[ColumnReason]]
+    final_explanation: str | None = None
+    sql_generation: str
+    retries: list[str]
+
+
 class QueryResponse(BaseModel):
     question: str
     generated_sql: str
     results: list[dict]
     row_count: int
     schema_tables_used: list[str]
+    reasoning: Reasoning | None = None
 
 
 class ErrorResponse(BaseModel):
