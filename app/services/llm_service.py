@@ -1,21 +1,24 @@
 import os
 import json
 
-import vertexai
-from vertexai.generative_models import GenerativeModel, SafetySetting
 from google.oauth2 import service_account
+from google.auth.transport.requests import Request as GoogleAuthRequest
+import httpx
 
 from app.config import settings
 from app.utils.logger import log_step
 
+SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
+
 
 class LLMService:
     def __init__(self):
-        self._client_initialized = False
+        self._token: str | None = None
+        self._credentials = None
 
-    async def _ensure_client(self):
-        if self._client_initialized:
-            return
+    async def _ensure_token(self) -> str:
+        if self._token:
+            return self._token
 
         creds_path = settings.google_application_credentials
         if not creds_path or not os.path.exists(creds_path):
@@ -25,67 +28,74 @@ class LLMService:
             )
 
         abs_path = os.path.abspath(creds_path)
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = abs_path
-
-        credentials = service_account.Credentials.from_service_account_file(
+        self._credentials = service_account.Credentials.from_service_account_file(
             abs_path,
-            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            scopes=SCOPES,
         )
+
+        auth_req = GoogleAuthRequest()
+        self._credentials.refresh(auth_req)
+        self._token = self._credentials.token
 
         project = settings.vertex_ai_project
         if not project:
             with open(abs_path) as f:
                 project = json.load(f).get("project_id", "")
-                log_step("GCP", f"Auto-detected project from service account", project=project)
 
-        vertexai.init(
-            project=project,
-            location=settings.vertex_ai_location,
-            credentials=credentials,
-        )
-
-        self._client_initialized = True
-        log_step("GCP", f"Vertex AI initialized", project=project, location=settings.vertex_ai_location)
+        log_step("GCP", "Vertex AI credentials loaded",
+                 project=project,
+                 location=settings.vertex_ai_location,
+                 model=settings.vertex_ai_model)
+        return self._token
 
     async def generate_sql(self, system_prompt: str, user_prompt: str) -> str:
-        await self._ensure_client()
+        token = await self._ensure_token()
 
-        model_name = settings.vertex_ai_model
-        log_step("LLM", f"Calling {model_name}", max_tokens=2048, temperature=0.10)
+        project = settings.vertex_ai_project
+        location = settings.vertex_ai_location
+        model = settings.vertex_ai_model
 
-        safety_settings = [
-            SafetySetting(
-                category=SafetySetting.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                threshold=SafetySetting.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            ),
-            SafetySetting(
-                category=SafetySetting.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                threshold=SafetySetting.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            ),
-            SafetySetting(
-                category=SafetySetting.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                threshold=SafetySetting.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            ),
-            SafetySetting(
-                category=SafetySetting.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                threshold=SafetySetting.HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            ),
-        ]
-
-        model = GenerativeModel(
-            model_name=model_name,
-            system_instruction=[system_prompt],
-            safety_settings=safety_settings,
-            generation_config={
-                "max_output_tokens": 2048,
-                "temperature": 0.10,
-                "top_p": 0.60,
-            },
+        url = (
+            f"https://{location}-aiplatform.googleapis.com/v1/"
+            f"projects/{project}/locations/{location}/"
+            f"publishers/anthropic/models/{model}:rawPredict"
         )
 
-        response = await model.generate_content_async(user_prompt)
+        log_step("LLM", f"Calling Claude on Vertex AI",
+                 model=model, max_tokens=2048, temperature=0.10)
 
-        raw = response.text.strip()
+        payload = {
+            "anthropic_version": "vertex-2023-10-16",
+            "messages": [
+                {"role": "user", "content": user_prompt}
+            ],
+            "system": system_prompt,
+            "max_tokens": 2048,
+            "temperature": 0.10,
+        }
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8",
+        }
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(url, json=payload, headers=headers)
+
+        if response.status_code != 200:
+            raise ValueError(
+                f"Vertex AI API error (HTTP {response.status_code}): "
+                f"{response.text[:500]}"
+            )
+
+        data = response.json()
+        content_blocks = data.get("content", [])
+        raw = ""
+        for block in content_blocks:
+            if block.get("type") == "text":
+                raw += block.get("text", "")
+
+        raw = raw.strip()
         log_step("LLM", f"Raw response received", chars=len(raw))
 
         if raw == "UNABLE_TO_GENERATE":

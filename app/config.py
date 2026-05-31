@@ -8,10 +8,10 @@ class Settings(BaseSettings):
 
     postgres_dsn: str = "postgresql://user:password@localhost:5432/dbname"
 
-    google_application_credentials: str = "./saturam.json"
+    google_application_credentials: str = ""
     vertex_ai_project: str = ""
-    vertex_ai_location: str = "us-central1"
-    vertex_ai_model: str = "gemini-1.5-pro-002"
+    vertex_ai_location: str = ""
+    vertex_ai_model: str = ""
 
     app_title: str = "Text2SQL BI API"
     debug: bool = False
