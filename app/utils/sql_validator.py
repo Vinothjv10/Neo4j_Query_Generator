@@ -35,8 +35,8 @@ def validate_columns_in_sql(
     refs = [c for c in refs if known_tables is None or c not in known_tables]
     unknown = [c for c in refs if c not in known_columns]
     if unknown:
-        msg = "Columns not found in schema: " + ", ".join(suggestions)
-        log_step("VALIDATOR", f"REJECTED - unknown columns", unknown=suggestions)
+        msg = "Columns not found in schema: " + ", ".join(unknown)
+        log_step("VALIDATOR", f"REJECTED - unknown columns", unknown=unknown)
         raise ValueError(msg)
     log_step("VALIDATOR", f"PASSED - column validation ({len(refs)} refs checked)")
     return sql

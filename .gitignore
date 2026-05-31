@@ -35,6 +35,5 @@ frontend/.next/
 frontend/out/
 frontend/next-env.d.ts
 
-# --- Python backend (text2sql-bi) ---
-text2sql-bi/.venv/
-text2sql-bi/__pycache__/
+# --- Python backend (app) ---
+app/__pycache__/
