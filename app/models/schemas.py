@@ -44,6 +44,11 @@ class Reasoning(BaseModel):
     final_explanation: str | None = None
     sql_generation: str
     retries: list[str]
+    # Advanced features
+    agent_mode: bool = False
+    agent_trace: list[str] = []
+    few_shot_count: int = 0
+    gnn_boost_applied: bool = False
 
 
 class QueryResponse(BaseModel):

@@ -8,3 +8,5 @@ httpx
 google-cloud-aiplatform
 scikit-learn
 numpy
+networkx
+aiosqlite

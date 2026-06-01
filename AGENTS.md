@@ -38,6 +38,26 @@ Convert natural-language logistics questions into PostgreSQL queries using Neo4j
 ## Blocked
 - (none)
 
+## Advanced Features Added (May 2026)
+- **ReAct Agentic SQL Agent** (`app/services/react_agent_service.py`): Claude tool_use loop with search_tables/get_columns/check_join_path tools. Enabled via `USE_REACT_AGENT=true` env var. Fixes test #9 (NDR domain routing). Falls back to standard pipeline on failure.
+- **DAIL-SQL Few-Shot** (`app/services/dail_sql_service.py` + `app/utils/sql_skeleton.py`): SQLite store at `/tmp/dail_sql_store.db`. Stores every successful (question, SQL) pair. Retrieves top-3 similar examples using 0.6×semantic + 0.4×skeleton-Jaccard score. Injected into LLM prompt. Requires `pip install aiosqlite`. Gracefully disabled if not installed.
+- **GNN Schema Linking** (`app/services/gnn_schema_service.py`): NetworkX schema graph with DEPENDS_ON + MAPS_TO_SIBLING edges. Per-node features: tier_score, col_count, maps_to_count, PageRank, degree_centrality. 1-hop mean-aggregation message passing. Propagation-based re-ranking of retrieval results at query time. Requires `pip install networkx`.
+- **LLM token auto-refresh** (`app/services/llm_service.py`): GCP OAuth2 token now tracked with expiry timestamp; refreshed 5 minutes before expiry to prevent silent 1-hour auth failures.
+- **deps**: `networkx`, `aiosqlite` added to requirements.txt
+
+## Setup for Advanced Features
+```bash
+cd /home/ubuntu/Neo4j_Query_Generator
+.venv/bin/pip install networkx aiosqlite
+
+# Optional: enable ReAct agent (uses Claude tool_use API)
+echo "USE_REACT_AGENT=true" >> .env
+
+# Restart server
+pkill -f uvicorn
+.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 >> /tmp/text2sql-bi.log 2>&1 &
+```
+
 ## Key Decisions
 - **Vertex AI over NVIDIA**: uses existing GCP service account, no separate API key needed; Claude Haiku is fastest Anthropic model with adequate SQL quality
 - **Single embed call per query**: question embedded once, vector cached and reused for table search + all column rankings; avoids 5+ redundant API calls

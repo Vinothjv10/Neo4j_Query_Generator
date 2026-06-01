@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     app_title: str = "Text2SQL BI API"
     debug: bool = False
+    use_react_agent: bool = False
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

@@ -55,8 +55,21 @@ class PromptBuilder:
         question: str,
         schema_context: SchemaContext,
         enrichment: dict | None = None,
+        few_shot_examples: list[dict] | None = None,
     ) -> str:
         lines: list[str] = []
+
+        # ── Few-shot examples (DAIL-SQL) ──────────────────────────────────
+        if few_shot_examples:
+            lines.append("--- SIMILAR PAST QUERIES (use as style reference) ---")
+            for i, ex in enumerate(few_shot_examples, 1):
+                lines.append(f"Example {i} (similarity={ex.get('score', 0):.2f}):")
+                lines.append(f"  Question: {ex['question']}")
+                lines.append(f"  SQL:      {ex['sql'].strip()}")
+                if ex.get("tables"):
+                    lines.append(f"  Tables:   {', '.join(ex['tables'])}")
+                lines.append("")
+            lines.append("--- END EXAMPLES ---\n")
 
         has_t3 = any(t.table_name.startswith("t3_") for t in schema_context.tables)
         if has_t3:
